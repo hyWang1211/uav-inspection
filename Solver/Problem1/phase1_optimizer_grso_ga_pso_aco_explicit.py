@@ -234,7 +234,11 @@ class ExplicitMetaheuristicSolvers:
         
         # 2. 剪枝优化
         final_assignment, final_nests, final_loads = self._grso_pruning(final_assignment, active_nests, nest_loads)
+        # final_assignment, active_nests, nest_loads = self._grso_pruning(final_assignment, active_nests, nest_loads)
         
+        # 3. [新增] 负载再平衡 (微调)
+        # final_assignment, final_nests, final_loads = self._grso_post_rebalance(final_assignment, active_nests, nest_loads)
+
         # 3. 转换结果为 DataFrame (保持与原G-RSO输出一致，方便绘图)
         # selected_nests_data = []
         total_cost = 0
@@ -367,6 +371,77 @@ class ExplicitMetaheuristicSolvers:
                     improved = True
                     break
         return curr_assign, list(curr_active), curr_loads
+    
+    def _grso_post_rebalance(self, assignment, active_nests, loads):
+        """
+        Phase 3: 负载再平衡 (尝试移动风机以降低总成本)
+        逻辑：遍历所有风机，看能否换个机巢，从而触发由于机巢的“降级”省钱。
+        """
+        curr_assign = assignment.copy()
+        curr_loads = loads.copy()
+        curr_active = set(active_nests)
+        
+        improved = True
+        while improved:
+            improved = False
+            # 遍历所有已分配的风机
+            for k, current_nest in list(curr_assign.items()):
+                if current_nest == -1: continue
+                
+                # 计算如果移走 k，当前机巢能否降级省钱？
+                current_load = curr_loads[current_nest]
+                cost_current_old = self._get_required_type_and_cost(current_load)[1]
+                cost_current_new = self._get_required_type_and_cost(current_load - 1)[1]
+                saving = cost_current_old - cost_current_new
+                
+                if saving <= 0: continue # 移走也不能省钱（比如从 3个变2个，还是Type1），跳过
+                
+                # 寻找潜在的新东家
+                best_target = -1
+                max_net_saving = 0
+                
+                # 在其他激活机巢中找
+                candidates = [l for l in curr_active if l != current_nest]
+                # 按距离排序，优先找近的
+                candidates.sort(key=lambda l: self.dist_matrix[l, k])
+                
+                for target in candidates:
+                    # 必须物理可达
+                    if self.R_lk[target, k] == 0: continue
+                    
+                    target_load = curr_loads[target]
+                    # 必须有容量
+                    if target_load >= self.global_capacity_limit: continue
+                    
+                    # 计算目标机巢升级成本
+                    cost_target_old = self._get_required_type_and_cost(target_load)[1]
+                    cost_target_new = self._get_required_type_and_cost(target_load + 1)[1]
+                    cost_increase = cost_target_new - cost_target_old
+                    
+                    # 计算净收益
+                    net_saving = saving - cost_increase
+                    
+                    if net_saving > 0.001: # 浮点数容差
+                        # 找到了一个能省钱的跳槽方案！
+                        # 贪婪：只要找到收益更大的就更新，或者找到第一个就走？这里找收益最大的
+                        if net_saving > max_net_saving:
+                            max_net_saving = net_saving
+                            best_target = target
+                
+                # 执行跳槽
+                if best_target != -1:
+                    curr_assign[k] = best_target
+                    curr_loads[current_nest] -= 1
+                    curr_loads[best_target] += 1
+                    improved = True
+                    # 如果原机巢空了，移除它
+                    if curr_loads[current_nest] == 0:
+                        curr_active.remove(current_nest)
+                        del curr_loads[current_nest]
+                    break # 结构变了，重新开始循环以防数据不一致
+                    
+        return curr_assign, list(curr_active), curr_loads
+
 
 
     # ==========================================
@@ -613,118 +688,404 @@ class ExplicitMetaheuristicSolvers:
             'details': details
         }
     
-    # ==========================================
-    # 4. Reverse Greedy (Destructive Heuristic)
-    # 基于文献 [X] 的反向剔除策略
-    # ==========================================
-    # def run_reverse_greedy(self):
-    #     print(f"--- Running Reverse Greedy (Destructive) ---")
+    # # =====================================================
+    # #  Reverse Greedy (Benchmark from Reference Paper)
+    # #  Logic: Start with ALL nests active -> Prune
+    # # =====================================================
+    # def run_reverse_greedy(self, history_length=200):
+    #     print(f"--- Running Reverse Greedy (Destructive Benchmark) ---")
         
-    #     # 1. 初始化：假设每个风机位置都建一个机巢
-    #     # 注意：这里我们只能用候选点中与风机重合的那些，或者最接近的那些
-    #     # 为了简化，我们假设初始激活所有候选机巢 (Active = All)
-    #     # 或者更严格按照论文：只激活那些位置上有风机的候选点
-        
-    #     # 策略：初始激活所有候选机巢，并将每个风机指派给最近的机巢
-    #     active_nests = list(range(self.n_nests))
-        
-    #     # 初始指派
-    #     assignment = {}
+    #     # 1. 初始化：满配状态 (Full Deployment)
+    #     # 假设所有候选点都激活，每个风机找最近的机巢
+    #     active_nests = list(self.nest_ids)
+    #     current_assignment = {}
     #     nest_loads = {l: 0 for l in active_nests}
         
-    #     # 简单的初始分配：每个风机找最近的
-    #     dists = np.full((self.n_nests, self.n_turbines), 1e9)
-    #     nest_coords = self.pm.nest_locations[['lon', 'lat']].values
-    #     turb_coords = self.pm.wind_turbines_df[['lon', 'lat']].values
-    #     for l in range(self.n_nests):
-    #         for k in range(self.n_turbines):
-    #             if self.R_lk[l, k] == 1:
-    #                 dists[l, k] = np.linalg.norm(nest_coords[l] - turb_coords[k])
-        
-    #     for k in range(self.n_turbines):
-    #         # 找最近的可行机巢
-    #         feasible = [l for l in active_nests if self.R_lk[l, k] == 1]
-    #         if feasible:
-    #             best_l = min(feasible, key=lambda l: dists[l, k])
-    #             assignment[k] = best_l
+    #     # 初始分配：最近距离原则
+    #     for k in self.turbine_ids:
+    #         # 找所有物理可达的机巢
+    #         reachable = [l for l in active_nests if self.R_lk[l, k] == 1]
+    #         if reachable:
+    #             # 选最近的
+    #             best_l = min(reachable, key=lambda l: self.dist_matrix[l, k])
+    #             current_assignment[k] = best_l
     #             nest_loads[best_l] += 1
     #         else:
-    #             assignment[k] = -1 # 无解情况
+    #             current_assignment[k] = -1 # 无解
 
-    #     # 2. 迭代剔除 (Pruning Loop)
+    #     # 2. 剪枝优化 (Pruning Loop)
+    #     # 这里的逻辑和 G-RSO 的 Phase 2 类似，但起点不同
+    #     # 文献逻辑：按“冗余度”排序，这里用“负载”作为冗余度的近似（负载越低越容易被替代）
+        
     #     improved = True
     #     while improved:
     #         improved = False
-            
-    #         # 排序：优先尝试移除负载最小的机巢 (最可能是冗余的)
-    #         # 或者是那是论文里的逻辑：按“重叠度”排序。这里用负载近似，效果一样且更快。
-    #         sorted_nests = sorted(active_nests, key=lambda l: nest_loads[l])
+    #         # 排序：优先尝试移除负载小的
+    #         sorted_nests = sorted(list(active_nests), key=lambda l: nest_loads[l])
             
     #         for l_remove in sorted_nests:
-    #             # 如果这个机巢本来就是空的，直接删
+    #             # 如果是空机巢，直接删
     #             if nest_loads[l_remove] == 0:
     #                 active_nests.remove(l_remove)
     #                 del nest_loads[l_remove]
     #                 improved = True
     #                 break
                 
-    #             # 尝试移除 l_remove
-    #             my_turbines = [k for k, v in assignment.items() if v == l_remove]
-                
-    #             # 检查这些风机能否被【其他激活的机巢】接收
-    #             # 约束：物理可达 + 容量限制 (Max Type * Eta)
+    #             # 尝试重新安置它的风机
+    #             my_turbines = [k for k, v in current_assignment.items() if v == l_remove]
     #             can_reassign = True
-    #             moves = {} # k -> new_l
+    #             moves = {} # 记录迁移计划 k -> new_nest
                 
-    #             # 创建临时负载表
+    #             # 建立临时负载表
     #             temp_loads = nest_loads.copy()
     #             del temp_loads[l_remove]
                 
-    #             max_cap = self.max_type * self.eta # e.g., 16
+    #             # 计算成本变动
+    #             # 减项：移除 l_remove 省下的钱
+    #             _, saved_cost = self._get_required_type_and_cost(nest_loads[l_remove])
+    #             cost_delta = -saved_cost
                 
     #             for k in my_turbines:
-    #                 # 在剩余的 active_nests 里找
-    #                 options = [l for l in active_nests if l != l_remove and self.R_lk[l, k] == 1]
-    #                 # 按距离排序
-    #                 options.sort(key=lambda l: dists[l, k])
+    #                 # 在剩余的 active_nests 里找新家
+    #                 candidates = []
+    #                 for l_target in active_nests:
+    #                     if l_target == l_remove: continue
+    #                     # 必须可达
+    #                     if self.R_lk[l_target, k] == 1:
+    #                         # 必须有容量
+    #                         if temp_loads[l_target] < self.global_capacity_limit:
+    #                             candidates.append(l_target)
                     
-    #                 found = False
-    #                 for l_target in options:
-    #                     if temp_loads[l_target] < max_cap:
-    #                         temp_loads[l_target] += 1
-    #                         moves[k] = l_target
-    #                         found = True
-    #                         break
-                    
-    #                 if not found:
+    #                 if not candidates:
     #                     can_reassign = False
     #                     break
+                    
+    #                 # 贪婪选择：选距离最近的邻居 (或者选升级成本最低的，这里用距离近似)
+    #                 candidates.sort(key=lambda l: self.dist_matrix[l, k])
+    #                 best_new = candidates[0]
+    #                 moves[k] = best_new
+                    
+    #                 # 算加项：邻居升级多花的钱
+    #                 old_c = self._get_required_type_and_cost(temp_loads[best_new])[1]
+    #                 new_c = self._get_required_type_and_cost(temp_loads[best_new]+1)[1]
+    #                 cost_delta += (new_c - old_c)
+                    
+    #                 temp_loads[best_new] += 1
                 
-    #             # 决策逻辑：Reverse Greedy 通常只看“能不能删”，只要能删就删，为了最小化数量
-    #             # 但为了公平对比成本，我们最好也检查一下 Cost 是否降低
-    #             # 那篇论文的目标是 Min Number，你的目标是 Min Cost
-    #             # 这里我们采用它的逻辑：Min Number (优先删)，还是你的逻辑？
-    #             # 建议：采用混合逻辑 —— 只要能删且不违反约束就删，因为减少机巢数量通常也能降低成本
-                
-    #             if can_reassign:
-    #                 # 执行移除
+    #             # 决策：如果可行且总成本降低了
+    #             if can_reassign and cost_delta < 0:
     #                 active_nests.remove(l_remove)
     #                 nest_loads = temp_loads
-    #                 for k, new_l in moves.items():
-    #                     assignment[k] = new_l
-                    
-    #                 print(f"  Reverse Greedy: Removed nest {l_remove}")
+    #                 for k, new_home in moves.items():
+    #                     current_assignment[k] = new_home
     #                 improved = True
     #                 break # 重新开始循环
+
+    #     # 3. 结果标准化 (Output Formatting)
+    #     # 转换为显式数组
+    #     explicit_nest_state = np.zeros(self.n_nests, dtype=int)
+    #     explicit_assignment = np.zeros(self.n_turbines, dtype=int)
+    #     total_cost = 0
+
+    #     for l in active_nests:
+    #         n = nest_loads[l]
+    #         if n > 0:
+    #             nest_type, cost = self._get_required_type_and_cost(n)
+    #             explicit_nest_state[l] = nest_type
+    #             total_cost += cost
         
-    #     # 3. 计算最终成本
-    #     # 构造 assignment array 格式以复用计算函数
-    #     final_assignment = np.zeros(self.n_turbines, dtype=int)
-    #     for k, v in assignment.items():
-    #         final_assignment[k] = v
+    #     for k, l in current_assignment.items():
+    #         explicit_assignment[k] = l
+
+    #     print(f"Reverse Greedy Final Cost: {total_cost:.2f}")
+        
+    #     # 生成详情
+    #     details = self.analyze_solution(explicit_nest_state, explicit_assignment)
+        
+    #     return {
+    #         'fitness': total_cost,
+    #         'history': [total_cost] * history_length, # 方便画图的平直线
+    #         'solution': {
+    #             'nests': explicit_nest_state, 
+    #             'assignments': explicit_assignment
+    #         },
+    #         'details': details
+    #     }
+
+
+    # =====================================================
+    #  Reverse Greedy (Benchmark from Reference Paper)
+    #  Logic: Sort by Intersection Score (Redundancy)
+    # =====================================================
+    # def run_reverse_greedy(self, history_length=200):
+    #     print(f"--- Running Reverse Greedy (Intersection-based Sorting) ---")
+        
+    #     # 0. 预处理：获取每个机巢的物理覆盖集合 (Reachable Set)
+    #     # format: {nest_id: set(turbine_ids)}
+    #     nest_reachability = {}
+    #     for l in self.nest_ids:
+    #         # 找出 R_lk 中该行等于 1 的风机索引
+    #         reachable_indices = set(np.where(self.R_lk[l] == 1)[0])
+    #         nest_reachability[l] = reachable_indices
+
+    #     # 1. 初始化：满配状态 (Full Deployment)
+    #     active_nests = list(self.nest_ids)
+    #     current_assignment = {}
+    #     nest_loads = {l: 0 for l in active_nests}
+        
+    #     # 初始分配：最近距离原则
+    #     for k in self.turbine_ids:
+    #         reachable = [l for l in active_nests if self.R_lk[l, k] == 1]
+    #         if reachable:
+    #             best_l = min(reachable, key=lambda l: self.dist_matrix[l, k])
+    #             current_assignment[k] = best_l
+    #             nest_loads[best_l] += 1
+    #         else:
+    #             current_assignment[k] = -1
+
+    #     # 2. 剪枝优化 (Pruning Loop)
+    #     improved = True
+    #     while improved:
+    #         improved = False
             
-    #     total_cost = self.calculate_solution_cost(final_assignment)
-    #     print(f"Reverse Greedy Best Cost: {total_cost:.2f}")
+    #         # --- [核心修改] 计算重叠度评分 (Redundancy Score) ---
+    #         # Score(i) = sum( |Reach(i) ∩ Reach(j)| ) for all j in Active\{i}
+    #         # 含义：我覆盖的风机，有多少也被现在的队友覆盖了？分越高越冗余。
+    #         redundancy_scores = {}
+            
+    #         for i in active_nests:
+    #             score = 0
+    #             my_set = nest_reachability[i]
+    #             for j in active_nests:
+    #                 if i == j: continue
+    #                 # 计算交集大小
+    #                 intersection_size = len(my_set.intersection(nest_reachability[j]))
+    #                 score += intersection_size
+    #             redundancy_scores[i] = score
+            
+    #         # --- 排序：重叠度从大到小 (High Redundancy First) ---
+    #         # 如果重叠度相同，再按负载从小到大作为次要排序键
+    #         sorted_nests = sorted(
+    #             active_nests, 
+    #             key=lambda l: (redundancy_scores[l], -nest_loads[l]), 
+    #             reverse=True
+    #         )
+            
+    #         # 3. 尝试移除
+    #         for l_remove in sorted_nests:
+    #             # 空机巢直接删
+    #             if nest_loads[l_remove] == 0:
+    #                 active_nests.remove(l_remove)
+    #                 del nest_loads[l_remove]
+    #                 improved = True
+    #                 break
+                
+    #             # 尝试重新安置
+    #             my_turbines = [k for k, v in current_assignment.items() if v == l_remove]
+    #             can_reassign = True
+    #             moves = {} 
+    #             temp_loads = nest_loads.copy()
+    #             del temp_loads[l_remove]
+                
+    #             # 成本计算
+    #             _, saved_cost = self._get_required_type_and_cost(nest_loads[l_remove])
+    #             cost_delta = -saved_cost
+                
+    #             for k in my_turbines:
+    #                 candidates = []
+    #                 for l_target in active_nests:
+    #                     if l_target == l_remove: continue
+    #                     # 必须可达
+    #                     if self.R_lk[l_target, k] == 1:
+    #                         # 必须有容量
+    #                         if temp_loads[l_target] < self.global_capacity_limit:
+    #                             candidates.append(l_target)
+                    
+    #                 if not candidates:
+    #                     can_reassign = False
+    #                     break
+                    
+    #                 # 选最近的邻居
+    #                 candidates.sort(key=lambda l: self.dist_matrix[l, k])
+    #                 best_new = candidates[0]
+    #                 moves[k] = best_new
+                    
+    #                 # 算升级成本
+    #                 old_c = self._get_required_type_and_cost(temp_loads[best_new])[1]
+    #                 new_c = self._get_required_type_and_cost(temp_loads[best_new]+1)[1]
+    #                 cost_delta += (new_c - old_c)
+                    
+    #                 temp_loads[best_new] += 1
+                
+    #             # 决策
+    #             if can_reassign and cost_delta < 0:
+    #                 active_nests.remove(l_remove)
+    #                 nest_loads = temp_loads
+    #                 for k, new_home in moves.items():
+    #                     current_assignment[k] = new_home
+    #                 improved = True
+    #                 print(f"  RG: Pruned nest {l_remove} (Score: {redundancy_scores[l_remove]})")
+    #                 break 
+
+    #     # 4. 结果格式化
+    #     explicit_nest_state = np.zeros(self.n_nests, dtype=int)
+    #     explicit_assignment = np.zeros(self.n_turbines, dtype=int)
+    #     total_cost = 0
+
+    #     for l in active_nests:
+    #         n = nest_loads[l]
+    #         if n > 0:
+    #             nest_type, cost = self._get_required_type_and_cost(n)
+    #             explicit_nest_state[l] = nest_type
+    #             total_cost += cost
         
-    #     # 这里的 history 没意义，因为不是迭代优化，只返回最终值，为了画图方便，返回一条直线
-    #     return total_cost, [total_cost] * 200
+    #     for k, l in current_assignment.items():
+    #         explicit_assignment[k] = l
+
+    #     print(f"Reverse Greedy Final Cost: {total_cost:.2f}")
+        
+    #     return {
+    #         'fitness': total_cost,
+    #         'history': [total_cost] * history_length,
+    #         'solution': {
+    #             'nests': explicit_nest_state, 
+    #             'assignments': explicit_assignment
+    #         },
+    #         'details': self.analyze_solution(explicit_nest_state, explicit_assignment)
+    #     }
+    # =====================================================
+    #  Reverse Greedy (Benchmark from Reference Paper)
+    #  Logic: Sort by Redundancy Score (Intersection), then Prune
+    # =====================================================
+    def run_reverse_greedy(self, history_length=200):
+        print(f"--- Running Reverse Greedy (Intersection-based Pruning) ---")
+        
+        # 1. 初始化：满配状态 (Full Deployment)
+        active_nests = list(self.nest_ids)
+        current_assignment = {}
+        nest_loads = {l: 0 for l in active_nests}
+        
+        # 初始分配：最近距离原则
+        for k in self.turbine_ids:
+            reachable = [l for l in active_nests if self.R_lk[l, k] == 1]
+            if reachable:
+                best_l = min(reachable, key=lambda l: self.dist_matrix[l, k])
+                current_assignment[k] = best_l
+                nest_loads[best_l] += 1
+            else:
+                current_assignment[k] = -1 # 未分配
+
+        # 预处理：计算所有机巢的“可达风机集合”
+        nest_reachability = {}
+        for l in self.nest_ids:
+            nest_reachability[l] = set(np.where(self.R_lk[l] == 1)[0])
+
+        # 2. 迭代剪枝 (Pruning Loop)
+        improved = True
+        while improved:
+            improved = False
+            
+            # --- [核心修改 1] 排序依据：重叠度 (Redundancy Score) ---
+            # Score(i) = sum( |Reach(i) ∩ Reach(j)| ) for all j in Active\{i}
+            # 含义：我覆盖的风机，有多少也被别人覆盖了？分数越高越冗余。
+            
+            redundancy_scores = {}
+            for i in active_nests:
+                score = 0
+                my_set = nest_reachability[i]
+                for j in active_nests:
+                    if i == j: continue
+                    intersection_size = len(my_set.intersection(nest_reachability[j]))
+                    score += intersection_size
+                redundancy_scores[i] = score
+            
+            # --- 排序：重叠度从大到小 (High Redundancy First) ---
+            # (文献中没有提到负载作为次要排序键，仅用重叠度)
+            sorted_nests = sorted(
+                active_nests, 
+                key=lambda l: redundancy_scores.get(l, 0), # get(l, 0) 防止 l 不在 dict 中
+                reverse=True 
+            )
+            
+            # 3. 尝试移除
+            for l_remove in sorted_nests:
+                # 如果该机巢没有风机（负载为0），直接删除
+                if nest_loads.get(l_remove, 0) == 0:
+                    if l_remove in active_nests:
+                        active_nests.remove(l_remove)
+                        if l_remove in nest_loads: del nest_loads[l_remove]
+                        improved = True
+                        print(f"  RG: Pruned empty nest {l_remove}")
+                        break # 结构变化，重新开始循环
+                    continue
+
+                # --- [核心修改 2] 移除决策：只需判断“能否移除” ---
+                # 逻辑：只要能移除，就立刻移除，不考虑成本！
+                # 目标是最小化数量，而不是成本。
+                
+                my_turbines = [k for k, v in current_assignment.items() if v == l_remove]
+                can_reassign = True
+                moves = {} # 记录迁移计划 k -> new_nest
+                
+                # 检查这些风机是否能被其他机巢接收
+                temp_loads = nest_loads.copy()
+                if l_remove in temp_loads: del temp_loads[l_remove] # 模拟删除
+                
+                for k in my_turbines:
+                    candidates = []
+                    for l_target in active_nests:
+                        if l_target == l_remove: continue # 跳过被删除的机巢
+                        # 必须可达
+                        if self.R_lk[l_target, k] == 1:
+                            # 必须有容量 (使用 global_capacity_limit)
+                            if temp_loads.get(l_target, 0) < self.global_capacity_limit: # get() 避免 KeyError
+                                candidates.append(l_target)
+                    
+                    if not candidates:
+                        can_reassign = False
+                        break
+                    
+                    # 贪婪选择：选最近的
+                    candidates.sort(key=lambda l: self.dist_matrix[l, k])
+                    best_new = candidates[0]
+                    moves[k] = best_new
+                    temp_loads[best_new] += 1
+                
+                # 决策：只要能移除，就执行
+                if can_reassign:
+                    active_nests.remove(l_remove)
+                    nest_loads = temp_loads
+                    for k, new_home in moves.items():
+                        current_assignment[k] = new_home
+                    
+                    improved = True
+                    print(f"  RG: Pruned nest {l_remove} (Redundancy Score: {redundancy_scores.get(l_remove, 0)})")
+                    break # 结构变了，重新开始循环
+        
+        # 4. 结果格式化
+        explicit_nest_state = np.zeros(self.n_nests, dtype=int)
+        explicit_assignment = np.zeros(self.n_turbines, dtype=int)
+        total_cost = 0
+
+        for l in active_nests:
+            n = nest_loads.get(l, 0) # 使用 get() 避免 KeyError
+            if n > 0:
+                nest_type, cost = self._get_required_type_and_cost(n)
+                explicit_nest_state[l] = nest_type
+                total_cost += cost
+        
+        for k, l in current_assignment.items():
+            explicit_assignment[k] = l
+
+        print(f"Reverse Greedy Final Cost: {total_cost:.2f}")
+        
+        # 返回统一格式
+        return {
+            'fitness': total_cost,
+            'history': [total_cost] * history_length, # 填充历史数据
+            'solution': {
+                'nests': explicit_nest_state, 
+                'assignments': explicit_assignment
+            },
+            'details': self.analyze_solution(explicit_nest_state, explicit_assignment)
+        }

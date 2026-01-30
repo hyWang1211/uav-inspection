@@ -22,6 +22,7 @@ def run_comparison(pm, solver):
     # 可以在这里统一调整迭代次数和种群大小
     algorithms = {
         'G-RSO': lambda: solver.run_grso(history_length=200),
+        'RG':    lambda: solver.run_reverse_greedy(history_length=200), # 新增这一行
         'GA':    lambda: solver.run_ga(pop_size=100, generations=200),
         'PSO':   lambda: solver.run_pso(swarm_size=100, iterations=200),
         'ACO':   lambda: solver.run_aco(n_ants=100, iterations=200)
@@ -47,6 +48,7 @@ def run_comparison(pm, solver):
         
         styles = {
             'G-RSO': {'color': 'red', 'ls': '-', 'lw': 2.5}, # 突出显示
+            'RG':    {'color': 'blue', 'ls': '--', 'lw': 2.0}, # 文献方法用蓝色虚线
             'GA':    {'color': 'orange', 'ls': '--', 'lw': 1.5},
             'PSO':   {'color': 'green', 'ls': '-.', 'lw': 1.5},
             'ACO':   {'color': 'purple', 'ls': ':', 'lw': 1.5}

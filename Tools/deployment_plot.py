@@ -194,7 +194,7 @@ def plot_results(physical_model_inst, phase1_results):
     ax.text(arrow_x, arrow_y - width_map*0.05, f"Wind: {W_mag}m/s\nDir: {nav_angle:.0f}°", color='blue', ha='center', fontsize=8, fontweight='bold', zorder=10)
 
     # Decor
-    ax.set_title(f"Optimization Result (Nests: {len(selected_nests_only)}, Cost: {objective_value:.0f})", fontsize=14)
+    ax.set_title(f"Optimization Result (Nests: {len(selected_nests_only)}, Cost: {objective_value:.2f})", fontsize=14)
     ax.set_xlabel("East (m)"); ax.set_ylabel("North (m)")
     ax.set_xlim(roi_x_min, roi_x_max); ax.set_ylim(roi_y_min, roi_y_max)
     ax.set_aspect('equal')

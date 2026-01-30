@@ -5,7 +5,7 @@ import os
 # ================= 配置 =================
 INPUT_FILE = 'dataset/zhangbei_turbines_osm.csv'
 OUTPUT_DIR = 'dataset/subsets'
-SIZES = [20, 50, 100, 200, 500, 1000]
+SIZES = [20, 50, 100, 200, 400, 600, 1000]
 # =======================================
 
 def create_clustered_subsets():

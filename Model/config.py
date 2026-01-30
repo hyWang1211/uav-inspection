@@ -10,7 +10,7 @@ if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
 # --- 数据文件 ---
-OSM_FILE = os.path.join(DATASET_DIR, 'subsets/turbines_200_clustered.csv')
+OSM_FILE = os.path.join(DATASET_DIR, 'subsets/turbines_100_clustered.csv')
 DEM_FILE = os.path.join(DATASET_DIR, 'n41_e114_1arc_v3.tif') 
 
 # --- 物理与工程参数 (Based on uav_inspection8.md) ---
@@ -27,7 +27,7 @@ KAPPA = 1.15
 # !!! 核心修改：速度限制 !!!
 # 既是最大允许地速，也是最大允许空速
 U_MAX = 15.0         # m/s (约 54 km/h)
-# U_MAX = 10.0         # m/s (约 54 km/h)
+# U_MAX = 12.0         # m/s (约 54 km/h)
 
 V_UP = 3.0           # m/s
 V_DOWN = 3.0         # m/s
@@ -36,7 +36,8 @@ T_SWAP = 300.0       # s
 DELTA_SAFE = 20.0    # m
 E_BAT = 1000000.0    # J
 
-WIND_SPEED = (3.0, 2.0) 
+# WIND_SPEED = (6, 8)
+WIND_SPEED = (3, 4)
 
 # --- 成本参数 ---
 OMEGA_2 = 1      # 无人机成本
@@ -46,6 +47,14 @@ NEST_BASE_COSTS = {
     3: 5.4,       # 3架容量机巢成本
     4: 6.8        # 4架容量机巢成本
 }
+
+# OMEGA_2 = 1      # 无人机成本
+# NEST_BASE_COSTS = {
+#     1: 2,       # 1架容量机巢成本
+#     2: 3.5,       # 2架容量机巢成本
+#     3: 5,       # 3架容量机巢成本
+#     4: 6.5        # 4架容量机巢成本
+# }
 
 # OMEGA_2 = 1      # 无人机成本
 # NEST_BASE_COSTS = {

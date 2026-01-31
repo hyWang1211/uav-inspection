@@ -47,8 +47,8 @@ def run_comparison(pm, solver):
         plt.figure()
         
         styles = {
-            'G-RSO': {'color': 'red', 'ls': '-', 'lw': 2.5}, # 突出显示
-            'RG':    {'color': 'blue', 'ls': '--', 'lw': 2.0}, # 文献方法用蓝色虚线
+            'G-RSO': {'color': 'red', 'ls': '-', 'lw': 2.0}, # 突出显示
+            'RG':    {'color': 'blue', 'ls': '--', 'lw': 1.0}, # 文献方法用蓝色虚线
             'GA':    {'color': 'orange', 'ls': '--', 'lw': 1.5},
             'PSO':   {'color': 'green', 'ls': '-.', 'lw': 1.5},
             'ACO':   {'color': 'purple', 'ls': ':', 'lw': 1.5}

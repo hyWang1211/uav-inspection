@@ -430,7 +430,10 @@ class ExplicitMetaheuristicSolvers:
             population.append(np.concatenate([nests, assigns]))
         
         best_fitness = float('inf')
-        best_genome = None  # 新增：记录最佳基因
+        # best_genome = None  # 新增：记录最佳基因
+        # [修改] 直接拿第一个个体占位，告诉编辑器它是一个数组，不是 None
+        best_genome = population[0].copy() 
+
         history = []
         
         for gen in range(generations):

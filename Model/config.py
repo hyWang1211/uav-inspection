@@ -10,7 +10,7 @@ if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
 # --- 数据文件 ---
-OSM_FILE = os.path.join(DATASET_DIR, 'subsets/turbines_500_clustered.csv')
+OSM_FILE = os.path.join(DATASET_DIR, 'subsets/turbines_864_clustered.csv')
 DEM_FILE = os.path.join(DATASET_DIR, 'n41_e114_1arc_v3.tif') 
 
 # --- 物理与工程参数 (Based on uav_inspection8.md) ---

@@ -25,7 +25,7 @@ def run_comparison(pm, solver):
         'RG':    lambda: solver.run_reverse_greedy(history_length=200), # 新增这一行
         'GA':    lambda: solver.run_ga(pop_size=100, generations=200),
         'PSO':   lambda: solver.run_pso(swarm_size=100, iterations=200),
-        'ACO':   lambda: solver.run_aco(n_ants=100, iterations=200)
+        # 'ACO':   lambda: solver.run_aco(n_ants=100, iterations=200)
     }
 
     results = {}
@@ -51,7 +51,7 @@ def run_comparison(pm, solver):
             'RG':    {'color': 'blue', 'ls': '--', 'lw': 1.0}, # 文献方法用蓝色虚线
             'GA':    {'color': 'orange', 'ls': '--', 'lw': 1.5},
             'PSO':   {'color': 'green', 'ls': '-.', 'lw': 1.5},
-            'ACO':   {'color': 'purple', 'ls': ':', 'lw': 1.5}
+            # 'ACO':   {'color': 'purple', 'ls': ':', 'lw': 1.5}
         }
         
         for name, res in results.items():

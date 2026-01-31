@@ -658,174 +658,400 @@ class ExplicitMetaheuristicSolvers:
     #  Reverse Greedy (Strict Paper Reproduction)
     #  Flow: Alg 2 (Full Connect) -> Alg 3 (Cap Trim) -> Alg 4 (Prune)
     # =====================================================
+    # def run_reverse_greedy(self, history_length=200):
+    #     print(f"--- Running Reverse Greedy (Strict Paper Logic: Alg 2+3+4) ---")
+        
+    #     # -----------------------------------------------------
+    #     # Step 1: Algorithm 2 - Initialization (Full Connectivity)
+    #     # -----------------------------------------------------
+    #     # 逻辑：只要物理可达 (R_lk=1)，就建立连接。这是一个“多对多”的关系。
+    #     # nest_connections: {nest_id: [turbine_id, ...]}
+    #     # turbine_parents: {turbine_id: [nest_id, ...]}
+    #     nest_connections = {l: [] for l in self.nest_ids}
+    #     turbine_parents = {k: [] for k in self.turbine_ids}
+    #     active_nests = list(self.nest_ids) # 初始：所有机巢激活
+
+    #     for l in active_nests:
+    #         # 找出该机巢能覆盖的所有风机
+    #         reachable_turbines = np.where(self.R_lk[l] == 1)[0]
+    #         for k in reachable_turbines:
+    #             nest_connections[l].append(k)
+    #             turbine_parents[k].append(l)
+
+    #     # -----------------------------------------------------
+    #     # Step 2: Algorithm 3 - Restrict Inspection Limit
+    #     # -----------------------------------------------------
+    #     # 逻辑：如果机巢 l 负载 > 16，尝试剔除距离最远的风机
+    #     # 前提：该风机必须被其他机巢覆盖 (len(parents) > 1)
+        
+    #     for l in active_nests:
+    #         # 只要负载超标，就一直尝试剔除
+    #         while len(nest_connections[l]) > self.global_capacity_limit:
+    #             current_turbines = nest_connections[l]
+                
+    #             # 按距离从远到近排序
+    #             # (Paper: Sort turbines in decreasing order based on distance)
+    #             current_turbines.sort(key=lambda k: self.dist_matrix[l, k], reverse=True)
+                
+    #             removed_any = False
+    #             for k in current_turbines:
+    #                 # 检查是否可剔除：必须有其他爹 (parents > 1)
+    #                 if len(turbine_parents[k]) > 1:
+    #                     # 执行剔除
+    #                     nest_connections[l].remove(k)
+    #                     turbine_parents[k].remove(l)
+    #                     removed_any = True
+    #                     break # 重新检查 while 循环条件
+                
+    #             # 如果遍历了一圈发现所有风机都只有我这一个爹，那就没法删了
+    #             # (即便是超载也只能忍着，这是物理拓扑决定的)
+    #             if not removed_any:
+    #                 break 
+
+    #     # -----------------------------------------------------
+    #     # Step 2.5: Normalize to 1-to-1 Assignment
+    #     # -----------------------------------------------------
+    #     # 文献 Alg 3 跑完后，风机可能还连着多个机巢。
+    #     # 为了进行后续优化和成本计算，我们需要把“多对多”变成“一对一”。
+    #     # 策略：对于有多个爹的风机，只保留距离最近的那个爹。
+        
+    #     current_assignment = {}
+    #     nest_loads = {l: 0 for l in active_nests}
+        
+    #     for k in self.turbine_ids:
+    #         parents = turbine_parents[k]
+    #         if not parents:
+    #             current_assignment[k] = -1 # 物理不可达
+    #         else:
+    #             # 选最近的爹
+    #             best_parent = min(parents, key=lambda l: self.dist_matrix[l, k])
+    #             current_assignment[k] = best_parent
+    #             nest_loads[best_parent] += 1
+
+    #     # 此时，我们得到了一个经过 Alg 2+3 处理后的初始解。
+    #     # 接下来进入 Alg 4 (Minimization)
+
+    #     # -----------------------------------------------------
+    #     # Step 3: Algorithm 4 - Minimization (Pruning)
+    #     # -----------------------------------------------------
+    #     # 预计算可达性集合用于重叠度计算
+    #     nest_reachability = {}
+    #     for l in self.nest_ids:
+    #         nest_reachability[l] = set(np.where(self.R_lk[l] == 1)[0])
+
+    #     improved = True
+    #     while improved:
+    #         improved = False
+            
+    #         # --- 计算重叠度 (Redundancy Score) ---
+    #         redundancy_scores = {}
+    #         for i in active_nests:
+    #             score = 0
+    #             my_set = nest_reachability[i]
+    #             for j in active_nests:
+    #                 if i == j: continue
+    #                 intersection_size = len(my_set.intersection(nest_reachability[j]))
+    #                 score += intersection_size
+    #             redundancy_scores[i] = score
+            
+    #         # --- 排序：按重叠度从大到小 ---
+    #         sorted_nests = sorted(
+    #             active_nests, 
+    #             key=lambda l: redundancy_scores.get(l, 0),
+    #             reverse=True 
+    #         )
+            
+    #         # --- 尝试移除 ---
+    #         for l_remove in sorted_nests:
+    #             # 1. 如果本来就是空的 (在 Step 2.5 中被抢光了)，删
+    #             if nest_loads.get(l_remove, 0) == 0:
+    #                 if l_remove in active_nests:
+    #                     active_nests.remove(l_remove)
+    #                     if l_remove in nest_loads: del nest_loads[l_remove]
+    #                     improved = True
+    #                     break 
+
+    #             # 2. 尝试迁移负载
+    #             my_turbines = [k for k, v in current_assignment.items() if v == l_remove]
+    #             can_reassign = True
+    #             moves = {} 
+    #             temp_loads = nest_loads.copy()
+    #             if l_remove in temp_loads: del temp_loads[l_remove]
+                
+    #             for k in my_turbines:
+    #                 candidates = []
+    #                 for l_target in active_nests:
+    #                     if l_target == l_remove: continue 
+    #                     if self.R_lk[l_target, k] == 1:
+    #                         if temp_loads.get(l_target, 0) < self.global_capacity_limit:
+    #                             candidates.append(l_target)
+                    
+    #                 if not candidates:
+    #                     can_reassign = False
+    #                     break
+                    
+    #                 # 贪婪选择最近的新家
+    #                 candidates.sort(key=lambda l: self.dist_matrix[l, k])
+    #                 best_new = candidates[0]
+    #                 moves[k] = best_new
+    #                 temp_loads[best_new] += 1
+                
+    #             # 决策：只要能移走就删 (Alg 4 Logic)
+    #             if can_reassign:
+    #                 active_nests.remove(l_remove)
+    #                 nest_loads = temp_loads
+    #                 for k, new_home in moves.items():
+    #                     current_assignment[k] = new_home
+    #                 improved = True
+    #                 print(f"  RG: Pruned nest {l_remove} (Score: {redundancy_scores.get(l_remove, 0)})")
+    #                 break 
+
+    #     # 4. 结果格式化
+    #     explicit_nest_state = np.zeros(self.n_nests, dtype=int)
+    #     explicit_assignment = np.zeros(self.n_turbines, dtype=int)
+    #     total_cost = 0
+
+    #     for l in active_nests:
+    #         n = nest_loads.get(l, 0)
+    #         if n > 0:
+    #             nest_type, cost = self._get_required_type_and_cost(n)
+    #             explicit_nest_state[l] = nest_type
+    #             total_cost += cost
+        
+    #     for k, l in current_assignment.items():
+    #         explicit_assignment[k] = l
+
+    #     print(f"Reverse Greedy Final Cost: {total_cost:.2f}")
+        
+    #     return {
+    #         'fitness': total_cost,
+    #         'history': [total_cost] * history_length, 
+    #         'solution': {'nests': explicit_nest_state, 'assignments': explicit_assignment},
+    #         'details': self.analyze_solution(explicit_nest_state, explicit_assignment)
+    #     }
+
+
+    # =====================================================
+    #  Reverse Greedy (Strict Paper Reproduction)
+    #  Strict Flow: Alg 2 -> Alg 3 -> Alg 4 (Delete or Fix Edges)
+    # =====================================================
     def run_reverse_greedy(self, history_length=200):
-        print(f"--- Running Reverse Greedy (Strict Paper Logic: Alg 2+3+4) ---")
+        print(f"--- Running Reverse Greedy (Strict Paper Logic) ---")
         
         # -----------------------------------------------------
         # Step 1: Algorithm 2 - Initialization (Full Connectivity)
         # -----------------------------------------------------
-        # 逻辑：只要物理可达 (R_lk=1)，就建立连接。这是一个“多对多”的关系。
-        # nest_connections: {nest_id: [turbine_id, ...]}
-        # turbine_parents: {turbine_id: [nest_id, ...]}
-        nest_connections = {l: [] for l in self.nest_ids}
-        turbine_parents = {k: [] for k in self.turbine_ids}
-        active_nests = list(self.nest_ids) # 初始：所有机巢激活
+        # 建立多对多关系
+        # nest_adj: {nest_id: set(turbine_ids)}
+        # turbine_adj: {turbine_id: set(nest_ids)}
+        nest_adj = {l: set() for l in self.nest_ids}
+        turbine_adj = {k: set() for k in self.turbine_ids}
+        active_nests = set(self.nest_ids) # 初始激活所有
 
         for l in active_nests:
-            # 找出该机巢能覆盖的所有风机
-            reachable_turbines = np.where(self.R_lk[l] == 1)[0]
-            for k in reachable_turbines:
-                nest_connections[l].append(k)
-                turbine_parents[k].append(l)
+            # 物理可达即连接
+            reachable = np.where(self.R_lk[l] == 1)[0]
+            for k in reachable:
+                nest_adj[l].add(k)
+                turbine_adj[k].add(l)
 
         # -----------------------------------------------------
         # Step 2: Algorithm 3 - Restrict Inspection Limit
         # -----------------------------------------------------
-        # 逻辑：如果机巢 l 负载 > 16，尝试剔除距离最远的风机
-        # 前提：该风机必须被其他机巢覆盖 (len(parents) > 1)
-        
-        for l in active_nests:
-            # 只要负载超标，就一直尝试剔除
-            while len(nest_connections[l]) > self.global_capacity_limit:
-                current_turbines = nest_connections[l]
-                
+        # 严格执行 Alg 3：如果超载，且风机有备胎，则断开最远的连接
+        for l in list(active_nests):
+            while len(nest_adj[l]) > self.global_capacity_limit:
                 # 按距离从远到近排序
-                # (Paper: Sort turbines in decreasing order based on distance)
+                current_turbines = list(nest_adj[l])
                 current_turbines.sort(key=lambda k: self.dist_matrix[l, k], reverse=True)
                 
                 removed_any = False
                 for k in current_turbines:
-                    # 检查是否可剔除：必须有其他爹 (parents > 1)
-                    if len(turbine_parents[k]) > 1:
-                        # 执行剔除
-                        nest_connections[l].remove(k)
-                        turbine_parents[k].remove(l)
+                    # 只有当风机有其他爹时，才能断开
+                    if len(turbine_adj[k]) > 1:
+                        nest_adj[l].remove(k)
+                        turbine_adj[k].remove(l)
                         removed_any = True
-                        break # 重新检查 while 循环条件
+                        break 
                 
-                # 如果遍历了一圈发现所有风机都只有我这一个爹，那就没法删了
-                # (即便是超载也只能忍着，这是物理拓扑决定的)
                 if not removed_any:
+                    # 死锁：虽然超载，但所有风机都只有我这一个爹，不能断
                     break 
 
         # -----------------------------------------------------
-        # Step 2.5: Normalize to 1-to-1 Assignment
+        # Step 3: Algorithm 4 - Minimization
         # -----------------------------------------------------
-        # 文献 Alg 3 跑完后，风机可能还连着多个机巢。
-        # 为了进行后续优化和成本计算，我们需要把“多对多”变成“一对一”。
-        # 策略：对于有多个爹的风机，只保留距离最近的那个爹。
+        # 这里不进行预处理，直接带着多对多关系进入循环
         
-        current_assignment = {}
-        nest_loads = {l: 0 for l in active_nests}
-        
-        for k in self.turbine_ids:
-            parents = turbine_parents[k]
-            if not parents:
-                current_assignment[k] = -1 # 物理不可达
-            else:
-                # 选最近的爹
-                best_parent = min(parents, key=lambda l: self.dist_matrix[l, k])
-                current_assignment[k] = best_parent
-                nest_loads[best_parent] += 1
-
-        # 此时，我们得到了一个经过 Alg 2+3 处理后的初始解。
-        # 接下来进入 Alg 4 (Minimization)
-
-        # -----------------------------------------------------
-        # Step 3: Algorithm 4 - Minimization (Pruning)
-        # -----------------------------------------------------
-        # 预计算可达性集合用于重叠度计算
-        nest_reachability = {}
+        # 预计算全集用于重叠度
+        global_reachability = {}
         for l in self.nest_ids:
-            nest_reachability[l] = set(np.where(self.R_lk[l] == 1)[0])
+            global_reachability[l] = set(np.where(self.R_lk[l] == 1)[0])
 
-        improved = True
-        while improved:
+        while True:
             improved = False
             
-            # --- 计算重叠度 (Redundancy Score) ---
-            redundancy_scores = {}
-            for i in active_nests:
+            # 1. 计算重叠度 (基于当前 active_nests)
+            # 注意：文献中是基于 "intersection with other UAVs"
+            # 这里使用 global_reachability 计算潜在重叠，或者使用当前 nest_adj 计算实际重叠？
+            # 文献 Line 2: "number of turbines intersecting with other UAVs"
+            # 通常指当前的覆盖范围。
+            scores = {}
+            for l in active_nests:
+                my_turbines = nest_adj[l]
                 score = 0
-                my_set = nest_reachability[i]
-                for j in active_nests:
-                    if i == j: continue
-                    intersection_size = len(my_set.intersection(nest_reachability[j]))
-                    score += intersection_size
-                redundancy_scores[i] = score
+                for other in active_nests:
+                    if l == other: continue
+                    # 计算当前实际连接的交集
+                    score += len(my_turbines.intersection(nest_adj[other]))
+                scores[l] = score
             
-            # --- 排序：按重叠度从大到小 ---
-            sorted_nests = sorted(
-                active_nests, 
-                key=lambda l: redundancy_scores.get(l, 0),
-                reverse=True 
-            )
+            # 2. 排序
+            sorted_nests = sorted(list(active_nests), key=lambda l: scores.get(l, 0), reverse=True)
             
-            # --- 尝试移除 ---
-            for l_remove in sorted_nests:
-                # 1. 如果本来就是空的 (在 Step 2.5 中被抢光了)，删
-                if nest_loads.get(l_remove, 0) == 0:
-                    if l_remove in active_nests:
-                        active_nests.remove(l_remove)
-                        if l_remove in nest_loads: del nest_loads[l_remove]
+            # 3. 遍历尝试处理
+            for l_curr in sorted_nests:
+                
+                # --- Check 1: Empty Nest ---
+                if len(nest_adj[l_curr]) == 0:
+                    active_nests.remove(l_curr)
+                    improved = True
+                    break
+
+                # --- Check 2: Can remove completely? (Lines 5-7) ---
+                # 条件：该机巢负责的所有风机，是否都有“别的爹”？
+                can_remove = True
+                
+                # 我们需要模拟一下：如果删了 l_curr，风机们去哪？会不会撑爆邻居？
+                # 注意：这是一个复杂的匹配问题。为了简化，我们假设风机都去最近的、没满的邻居。
+                
+                # 建立一个临时的负载计数器
+                temp_loads_check = {} 
+                # 先把当前的负载抄过来 (注意：不能直接用 len(nest_adj)，因为那是多对多关系)
+                # 在 Algorithm 4 中，因为是多对多，我们很难精确知道谁满没满。
+                # 这是一个逻辑死结：Alg 4 的多对多结构天然不适合做精确容量控制。
+                
+                # --- 妥协方案 ---
+                # 我们只检查：风机是否有“没满的”备胎？
+
+                for k in nest_adj[l_curr]:
+                    # 找备胎
+                    valid_parents = []
+                    # 检查风机 k 是否有除了 l_curr 以外的爹
+                    # 且那个爹必须在 active_nests 里
+                    other_parents = [p for p in turbine_adj[k] if p != l_curr and p in active_nests] #[这是原来的逻辑]
+                    # for p in turbine_adj[k]:
+                    #     if p != l_curr and p in active_nests:
+                    #         # [新增] 检查备胎的度数（负载）是否已接近极限
+                    #         # 注意：这里 len(nest_adj[p]) 是它连接的风机数（可能包含冗余连接）
+                    #         # 这是一个悲观估计。如果连线数 < 16，那肯定没满。
+                    #         if len(nest_adj[p]) < self.global_capacity_limit:
+                    #             valid_parents.append(p)
+                    
+                    # 文献隐含约束：虽然有别的爹，但别的爹接手后不能超载？
+                    # 文献 Alg 4 其实没明说容量，但为了工程合理性，通常默认继承关系
+                    # 如果严格按文献：只要有别的爹就行 (Alg 3 已经处理过容量，这里假设余量足够或后续会修剪)
+                    # 为了不报错，我们这里只检查 connectivity (严格复现逻辑)【这里的新版本已经修改了这个bug】
+                    # if len(valid_parents) == 0:
+                    #     can_remove = False
+                    #     break
+                    if len(other_parents) == 0:
+                        can_remove = False
+                        break
+                
+                if can_remove:
+                    # [Execute Removal] (Lines 8-9)
+                    # 断开连接
+                    for k in list(nest_adj[l_curr]):
+                        turbine_adj[k].remove(l_curr)
+                    del nest_adj[l_curr]
+                    active_nests.remove(l_curr)
+                    
+                    improved = True
+                    print(f"  RG: Removed Nest {l_curr} (Redundancy: {scores[l_curr]})")
+                    break # 结构变了，重新排序
+                
+                else:
+                    # [Execute Connection Cleanup] (Lines 10-16)
+                    # 如果删不掉，说明它很重要。但它可能有一些风机是多余连接的。
+                    # 文献逻辑：保留距离最近的连接，断开其他的。
+                    
+                    cleanup_happened = False
+                    # 遍历该机巢的风机
+                    # 注意：必须用 list copy，因为循环中会修改集合
+                    for k in list(nest_adj[l_curr]):
+                        parents = [p for p in turbine_adj[k] if p in active_nests]
+                        
+                        if len(parents) > 1:
+                            # 找到距离最近的爹
+                            best_p = min(parents, key=lambda p: self.dist_matrix[p, k])
+                            
+                            # 如果最近的爹不是当前机巢 l_curr
+                            if best_p != l_curr:
+                                # 说明 l_curr 对风机 k 来说是多余的远距离连接 -> 断开
+                                nest_adj[l_curr].remove(k)
+                                turbine_adj[k].remove(l_curr)
+                                cleanup_happened = True
+                            else:
+                                # 如果 l_curr 就是最近的，那么断开其他所有爹
+                                for p in parents:
+                                    if p != l_curr:
+                                        nest_adj[p].remove(k)
+                                        turbine_adj[k].remove(p)
+                                        # 注意：这可能会改变其他机巢的负载，甚至让它们变空
+                                        cleanup_happened = True
+                    
+                    if cleanup_happened:
+                        # 虽然没有移除整站，但连接变了，重叠度变了，需要重新评估
                         improved = True
                         break 
 
-                # 2. 尝试迁移负载
-                my_turbines = [k for k, v in current_assignment.items() if v == l_remove]
-                can_reassign = True
-                moves = {} 
-                temp_loads = nest_loads.copy()
-                if l_remove in temp_loads: del temp_loads[l_remove]
-                
-                for k in my_turbines:
-                    candidates = []
-                    for l_target in active_nests:
-                        if l_target == l_remove: continue 
-                        if self.R_lk[l_target, k] == 1:
-                            if temp_loads.get(l_target, 0) < self.global_capacity_limit:
-                                candidates.append(l_target)
-                    
-                    if not candidates:
-                        can_reassign = False
-                        break
-                    
-                    # 贪婪选择最近的新家
-                    candidates.sort(key=lambda l: self.dist_matrix[l, k])
-                    best_new = candidates[0]
-                    moves[k] = best_new
-                    temp_loads[best_new] += 1
-                
-                # 决策：只要能移走就删 (Alg 4 Logic)
-                if can_reassign:
-                    active_nests.remove(l_remove)
-                    nest_loads = temp_loads
-                    for k, new_home in moves.items():
-                        current_assignment[k] = new_home
-                    improved = True
-                    print(f"  RG: Pruned nest {l_remove} (Score: {redundancy_scores.get(l_remove, 0)})")
-                    break 
+            if not improved:
+                break
 
-        # 4. 结果格式化
+        # -----------------------------------------------------
+        # Final Step: Build Standard Output
+        # -----------------------------------------------------
+        # 此时应该是一对一关系（或极少数一对多被清理了）。
+        # 构建最终的 assignment 用于计算成本
+        
         explicit_nest_state = np.zeros(self.n_nests, dtype=int)
         explicit_assignment = np.zeros(self.n_turbines, dtype=int)
         total_cost = 0
-
+        
+        # 填充 Assignment
+        for k in self.turbine_ids:
+            parents = list(turbine_adj[k])
+            if not parents:
+                explicit_assignment[k] = -1
+            else:
+                # 理论上 Step 3 的 else 分支已经清理成一对一了
+                # 防御性编程：如果还有多个，选第一个
+                best_l = parents[0]
+                explicit_assignment[k] = best_l
+        
+        # 填充 Nest State (根据最终负载)
+        # 注意：需要重新统计负载，因为 assignment 最终化了
+        final_loads = {l: 0 for l in active_nests}
+        for k, l in enumerate(explicit_assignment):
+            if l != -1 and l in final_loads:
+                final_loads[l] += 1
+                
         for l in active_nests:
-            n = nest_loads.get(l, 0)
+            n = final_loads[l]
             if n > 0:
                 nest_type, cost = self._get_required_type_and_cost(n)
                 explicit_nest_state[l] = nest_type
                 total_cost += cost
-        
-        for k, l in current_assignment.items():
-            explicit_assignment[k] = l
+            else:
+                # 可能是被 Line 10-16 清空了但还没来得及在下一轮 remove
+                explicit_nest_state[l] = 0
 
         print(f"Reverse Greedy Final Cost: {total_cost:.2f}")
         
         return {
             'fitness': total_cost,
-            'history': [total_cost] * history_length, 
+            'history': [total_cost] * history_length,
             'solution': {'nests': explicit_nest_state, 'assignments': explicit_assignment},
             'details': self.analyze_solution(explicit_nest_state, explicit_assignment)
         }
